@@ -689,20 +689,19 @@ class MPCacheEngine:
         self,
         key: IPCCacheEngineKey,
         tp_size: int,
-        poll_interval: float = 0.005,
     ) -> int:
         """同步版 lookup：提交 prefetch 并阻塞等待结果，直接返回 prefix_hits。
 
         Args:
             key: Cache key with request_id embedded.
             tp_size: Tensor-parallel size for MLA multi-reader locking.
-            poll_interval: 轮询间隔（秒），默认 5ms。每次轮询需要抢 2 把锁
-                （_prefetch_job_lock 和 _results_lock），间隔太小会与后台
-                prefetch 线程产生锁竞争，影响 prefetch 吞吐。
 
         Returns:
             Chunk count (prefix_hits) once prefetch is complete.
         """
+        # 轮询间隔 5ms：每次轮询需要抢 2 把锁（_prefetch_job_lock 和
+        # _results_lock），间隔太小会与后台 prefetch 线程产生锁竞争，影响吞吐。
+        poll_interval = 0.005
         job_id = self.lookup(key, tp_size)
         while True:
             result = self.query_prefetch_status(job_id)
