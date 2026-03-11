@@ -185,6 +185,43 @@ class LMCacheMPSchedulerAdapter:
         self._lookup_job_ids[request_id] = job_id
 
     @_lmcache_nvtx_annotate
+    def maybe_submit_lookup_request_sync(
+        self,
+        request_id: str,
+        token_ids: list[int],
+    ) -> int:
+        """
+        同步版 lookup：提交 prefetch 并阻塞等待结果，直接返回匹配的 token 数。
+
+        与 maybe_submit_lookup_request + check_lookup_result 的两步异步流程不同，
+        本方法在服务端完成 prefetch 后才返回，调用方无需轮询。
+
+        Args:
+            request_id: The ID of the lookup request.
+            token_ids: Token IDs to lookup from LMCache.
+
+        Returns:
+            An integer representing the total number of tokens matched
+            in LMCache (prefix matching).
+        """
+        aligned_end = (len(token_ids) // self.chunk_size) * self.chunk_size
+
+        key = self._create_key(
+            token_ids,
+            start=0,
+            end=aligned_end,
+            request_id=request_id,
+        ).no_worker_id_version()
+
+        result = send_lmcache_request(
+            self.mq_client,
+            RequestType.LOOKUP_SYNC,
+            [key, self.tp_size],
+        ).result()
+
+        return (result or 0) * self.chunk_size
+
+    @_lmcache_nvtx_annotate
     def check_lookup_result(self, request_id: str) -> int | None:
         """
         Check the result of a previously submitted lookup request.

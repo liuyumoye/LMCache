@@ -696,6 +696,30 @@ class MPCacheEngine:
 
         return found_count
 
+    def lookup_sync(
+        self,
+        key: IPCCacheEngineKey,
+        tp_size: int,
+    ) -> int:
+        """同步版 lookup：提交 prefetch 并阻塞等待结果，直接返回 prefix_hits。
+
+        Args:
+            key: Cache key with request_id embedded.
+            tp_size: Tensor-parallel size for MLA multi-reader locking.
+
+        Returns:
+            Chunk count (prefix_hits) once prefetch is complete.
+        """
+        # 轮询间隔 5ms：每次轮询需要抢 2 把锁（_prefetch_job_lock 和
+        # _results_lock），间隔太小会与后台 prefetch 线程产生锁竞争，影响吞吐。
+        poll_interval = 0.005
+        job_id = self.lookup(key, tp_size)
+        while True:
+            result = self.query_prefetch_status(job_id)
+            if result is not None:
+                return result
+            time.sleep(poll_interval)
+
     def free_lookup_locks(
         self,
         key: IPCCacheEngineKey,
@@ -859,6 +883,7 @@ def run_cache_server(
     )
     add_handler_helper(server, RequestType.STORE, engine.store)
     add_handler_helper(server, RequestType.LOOKUP, engine.lookup)
+    add_handler_helper(server, RequestType.LOOKUP_SYNC, engine.lookup_sync)
     add_handler_helper(
         server, RequestType.QUERY_PREFETCH_STATUS, engine.query_prefetch_status
     )
